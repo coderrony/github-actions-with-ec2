@@ -1,0 +1,128 @@
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+env:
+  DEPLOY_PATH: /home/ubuntu/github-actions-with-ec2
+
+jobs:
+  # (Test Job)
+  test:
+    runs-on: self-hosted # run on ubuntu server
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Prerequisites (if needed)
+        run: |
+          set -e
+          echo "=========================================="
+          echo "Installing/Verifying Prerequisites"
+          echo "=========================================="
+          # Install Node.js if not present
+          if ! command -v node &> /dev/null; then
+            echo "Installing Node.js ..."
+            node -v || curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+            sudo apt install -y nodejs
+          else
+            echo "Node.js already installed"
+            
+          fi
+
+      - name: Run Tests and Capture Results
+        run: |
+
+          # Dependency install & test
+          npm install
+          npm run check > test-results.txt || { echo "Tests failed" > test-results.txt; exit 1; }
+
+      # Artifact Upload
+      - name: Upload Test Results Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-artifact
+          path: test-results.txt
+
+  # (Deploy Job)
+  deploy:
+    runs-on: self-hosted # run on ubuntu server
+    needs: test # test job run after deploy job
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Artifact Download
+      - name: Download Test Results
+        uses: actions/download-artifact@v4
+        with:
+          name: test-results-artifact
+
+      - name: Display Artifact Content
+        run: |
+          echo "--- Test Results Start ---"
+          cat test-results.txt
+          echo "--- Test Results End ---"
+
+      - name: Deployment Mechanism
+        run: |
+          bash << 'EOF'
+          set -e
+          echo "=========================================="
+          echo "Deploying Application"
+          echo "=========================================="
+
+          # Clone or pull repository
+          if [ ! -d "${{ env.DEPLOY_PATH }}" ]; then
+            echo "Fresh deployment - cloning repository..."
+            git clone https://github.com/${{ github.repository }}.git ${{ env.DEPLOY_PATH }}
+          else
+            echo "Updating existing deployment..."
+            cd ${{ env.DEPLOY_PATH }}
+            git fetch origin
+            git reset --hard origin/main
+          fi
+
+          cd ${{ env.DEPLOY_PATH }}
+
+          # Deploy application
+            echo ""
+            echo "=========================================="
+            echo "Deploying Application - Installing Dependencies and Starting Server"
+            echo "=========================================="
+
+            # Install dependencies
+            echo "Installing  dependencies..."
+            npm install --production
+
+          # Install PM2 if not present
+          if ! command -v pm2 &> /dev/null; then
+            echo "Installing PM2..."
+            sudo npm install -g pm2
+            echo "PM2 installed"
+          else
+            echo "PM2 $(pm2 --version) already installed"
+          fi
+
+          # Check if app.js exists in src/ directory
+          if [ -f "src/app.js" ]; then
+            SERVER_FILE="src/app.js"
+          elif [ -f "app.js" ]; then
+            SERVER_FILE="app.js"
+          else
+            echo "Error: app.js not found in github-actions-with-ec2/src/ or github-actions-with-ec2/"
+            exit 1
+          fi
+
+          # use PM2 running application 
+          if pm2 describe application-backend > /dev/null 2>&1; then
+            echo "Restarting application..."
+            pm2 restart application-backend --update-env
+          else
+            echo "Starting application for the first time..."
+            pm2 start $SERVER_FILE --name application-backend
+          fi
+          pm2 save
+          EOF
