@@ -1,4 +1,4 @@
-## GitHub Actions Fundamentals --
+## GitHub Actions Fundamentals
 
 ### What is CI/CD?
 
